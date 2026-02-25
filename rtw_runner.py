@@ -232,18 +232,63 @@ async def run_rtw_check_and_download_pdf(
             await _fill_company(page, comp)
             await _click_continue(page)
             await page.wait_for_load_state("domcontentloaded", timeout=60000)
-            await page.wait_for_timeout(1200)
-
-            # Final page: download PDF
-            download = None
+            await page.wait_for_timeout(1200)            # Final page: download PDF
+            await page.wait_for_load_state("domcontentloaded", timeout=90000)
             try:
-                async with page.expect_download(timeout=60000) as dlinfo:
-                    await page.get_by_role("link", name="Download PDF").click()
-                download = await dlinfo.value
+                await page.wait_for_load_state("networkidle", timeout=90000)
             except Exception:
-                async with page.expect_download(timeout=60000) as dlinfo:
-                    await page.locator("a:has-text('Download PDF')").first.click()
-                download = await dlinfo.value
+                pass
+            await page.wait_for_timeout(800)
+
+            # Cookie banner can block the link on GOV.UK
+            try:
+                for cookie_sel in [
+                    "button:has-text('Accept additional cookies')",
+                    "button:has-text('Accept analytics cookies')",
+                    "button:has-text('Accept cookies')",
+                    "button:has-text('Hide cookie message')",
+                ]:
+                    loc = page.locator(cookie_sel).first
+                    if await loc.count():
+                        try:
+                            await loc.click(timeout=3000)
+                            await page.wait_for_timeout(400)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+            download = None
+
+            # Wait until a download link/button is present
+            candidates = [
+                lambda: page.get_by_role("link", name=re.compile(r"Download\s+PDF", re.I)),
+                lambda: page.get_by_role("button", name=re.compile(r"Download\s+PDF", re.I)),
+                lambda: page.locator("a:has-text('Download PDF')"),
+                lambda: page.locator("a[href$='.pdf' i]"),
+                lambda: page.locator("a[href*='pdf' i]:has-text('Download')"),
+            ]
+
+            clicked = False
+            last_click_err: Exception | None = None
+
+            for get_loc in candidates:
+                loc = get_loc().first
+                try:
+                    if await loc.count():
+                        await loc.scroll_into_view_if_needed(timeout=10000)
+                        await loc.wait_for(state="visible", timeout=60000)
+                        async with page.expect_download(timeout=120000) as dlinfo:
+                            await loc.click(timeout=60000)
+                        download = await dlinfo.value
+                        clicked = True
+                        break
+                except Exception as e:
+                    last_click_err = e
+                    continue
+
+            if download is None and not clicked:
+                raise RuntimeError(f"Download PDF link not clickable: {last_click_err}")
 
             if download is None:
                 raise RuntimeError("Download did not start")

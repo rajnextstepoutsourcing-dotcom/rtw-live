@@ -165,7 +165,7 @@ async def rtw_run(request: Request):
         raise HTTPException(status_code=400, detail="Company name is required")
 
     try:
-        from rtw_runner import run_rtw_check
+        from rtw_runner import run_rtw_check_and_download_pdf as run_rtw_check
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"rtw_runner missing or import failed: {e}")
 

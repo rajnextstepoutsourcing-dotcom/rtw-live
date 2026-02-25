@@ -204,19 +204,36 @@ def extract_share_code_from_text(text: str) -> Tuple[Optional[str], float, str]:
 # ----------------------------
 # PDF / Vision helpers
 # ----------------------------
-VISION_PROMPT = """You are extracting UK Right to Work details from uploaded documents/images.
+SHARE_PROMPT = """You are extracting a UK Right to Work SHARE CODE from the provided document image(s).
 
-Return ONLY strict JSON with keys:
+Return ONLY strict JSON:
 {
-  "share_code_raw9": "XXXXXXXXX",
+  "share_code_raw9": "XXXXXXXXX"
+}
+
+Rules:
+- The share code is exactly 9 characters, uppercase A-Z and digits 0-9.
+- Ignore spaces, hyphens, punctuation. Convert to uppercase.
+- If you see it in 3 groups like "ABC DEF GHI", return "ABCDEFGHI".
+- If multiple candidates exist, choose the one closest to the words "Share code".
+- If you cannot find a valid 9-character share code, return an empty string for share_code_raw9.
+"""
+
+DOB_PROMPT = """You are extracting ONLY the DATE OF BIRTH (DOB) from the provided document image(s).
+
+Return ONLY strict JSON:
+{
   "dob": "DD/MM/YYYY"
 }
 
 Rules:
-- SHARE CODE is 9 alphanumeric characters (A-Z0-9). Ignore spaces/dashes.
-- DOB must be a real date. If the year is shown as 2 digits, infer a realistic 4-digit year (e.g., 96 -> 1996).
-- If multiple candidates exist, choose the most likely.
+- Extract ONLY the date that is explicitly labeled as Date of birth / DOB / Birth.
+- IGNORE Date of issue, Date of expiry, Issue date, Expiry date, Printed date, Valid until, etc.
+- If multiple dates are present and labels are unclear, choose the earliest date in the document that looks like a birth date.
+- Return date in DD/MM/YYYY format (day first).
+- If you cannot find DOB with high confidence, return an empty string for dob.
 """
+
 
 
 def _is_pdf_bytes(b: bytes) -> bool:
@@ -349,19 +366,19 @@ def _parse_json_response(txt: str) -> Dict[str, Any]:
 
 
 def gemini_vision_extract(share_images: List[Tuple[bytes, str]], dob_images: List[Tuple[bytes, str]]) -> Dict[str, Any]:
+    """
+    Two-step Gemini Vision extraction:
+    1) Extract share code only from share_images (reduces cross-talk).
+    2) Extract DOB only from dob_images (with strong instruction to ignore issue/expiry dates).
+    Uses FAST model first, then STRONG as fallback when missing/suspicious.
+    """
     if GEMINI_CLIENT is None:
         raise RuntimeError("Gemini client not available (check GEMINI_API_KEY and google-genai install)")
 
-    def _call(model_name: str) -> Dict[str, Any]:
-        parts = [types.Part.from_text(text=VISION_PROMPT)]
-        if share_images:
-            parts.append(types.Part.from_text(text="SHARE CODE DOCUMENT IMAGES:"))
-            for b, mime in share_images:
-                parts.append(types.Part.from_bytes(data=b, mime_type=mime))
-        if dob_images:
-            parts.append(types.Part.from_text(text="DOB DOCUMENT IMAGES:"))
-            for b, mime in dob_images:
-                parts.append(types.Part.from_bytes(data=b, mime_type=mime))
+    def _call(model_name: str, prompt: str, images: List[Tuple[bytes, str]]) -> Dict[str, Any]:
+        parts = [types.Part.from_text(text=prompt)]
+        for b, mime in images or []:
+            parts.append(types.Part.from_bytes(data=b, mime_type=mime))
 
         resp = GEMINI_CLIENT.models.generate_content(
             model=model_name,
@@ -373,39 +390,67 @@ def gemini_vision_extract(share_images: List[Tuple[bytes, str]], dob_images: Lis
             data["_model"] = model_name
         return data if isinstance(data, dict) else {}
 
-    data: Dict[str, Any] = {}
+    # --- Share code ---
+    share_data: Dict[str, Any] = {}
     try:
-        data = _call(GEMINI_MODEL_FAST)
+        share_data = _call(GEMINI_MODEL_FAST, SHARE_PROMPT, share_images)
     except Exception:
-        data = {}
+        share_data = {}
 
-    def _missing(d: Dict[str, Any]) -> bool:
-        if not d:
-            return True
-        sc = normalize_share_code(str(d.get("share_code_raw9", "") or ""))
-        dob = str(d.get("dob", "") or "").strip()
-        dd, mm, yy = parse_dob_string(dob) if dob else ("", "", "")
-        return not (sc and dd and mm and yy)
+    sc = normalize_share_code(str(share_data.get("share_code_raw9", "") or "")) or ""
 
-    if _missing(data):
+    if not sc:
         try:
-            data = _call(GEMINI_MODEL_STRONG)
+            share_data = _call(GEMINI_MODEL_STRONG, SHARE_PROMPT, share_images)
         except Exception:
             pass
+        sc = normalize_share_code(str(share_data.get("share_code_raw9", "") or "")) or ""
 
-    sc = normalize_share_code(str(data.get("share_code_raw9", "") or "")) or ""
-    dd, mm, yy = ("", "", "")
-    dob = str(data.get("dob", "") or "").strip()
-    if dob:
-        dd, mm, yy = parse_dob_string(dob)
+    # --- DOB ---
+    dob_data: Dict[str, Any] = {}
+    try:
+        dob_data = _call(GEMINI_MODEL_FAST, DOB_PROMPT, dob_images)
+    except Exception:
+        dob_data = {}
+
+    dob_str = str(dob_data.get("dob", "") or "").strip()
+    dd, mm, yy = parse_dob_string(dob_str) if dob_str else ("", "", "")
+
+    # Suspicion rules: DOB should not look like issue/expiry (often recent).
+    # If year is very recent, retry STRONG with the stricter prompt.
+    from datetime import datetime
+    this_year = datetime.utcnow().year
+    suspicious = False
+    try:
+        y_int = int(yy) if yy else 0
+        if y_int and y_int >= this_year - 5:  # too recent to be DOB in most cases
+            suspicious = True
+    except Exception:
+        pass
+
+    if (not (dd and mm and yy)) or suspicious:
+        try:
+            dob_data = _call(GEMINI_MODEL_STRONG, DOB_PROMPT, dob_images)
+        except Exception:
+            pass
+        dob_str = str(dob_data.get("dob", "") or "").strip()
+        dd, mm, yy = parse_dob_string(dob_str) if dob_str else ("", "", "")
+
+    notes = []
+    if share_data.get("_model"):
+        notes.append(f"share_model={share_data.get('_model')}")
+    if dob_data.get("_model"):
+        notes.append(f"dob_model={dob_data.get('_model')}")
+    note_str = " ".join(notes).strip()
 
     return {
         "share_code_raw9": sc,
         "dob_day": dd,
         "dob_month": mm,
         "dob_year": yy,
-        "notes": f"model={data.get('_model','')}".strip(),
+        "notes": note_str,
     }
+
 
 
 def extract_rtw_fields(

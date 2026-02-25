@@ -10,7 +10,11 @@ function fillField(id, value) {
 
 function setConf(id, value) {
   if (!$(id)) return;
-  const pct = Math.round(Number(value) || 0);
+  let v = Number(value);
+  if (!isFinite(v) || v <= 0) { $(id).textContent = ""; return; }
+  // Backend often returns 0..1 confidence; convert to percentage if so.
+  if (v > 0 && v <= 1) v = v * 100;
+  const pct = Math.round(v);
   $(id).textContent = pct ? `Confidence: ${pct}%` : "";
 }
 
@@ -34,7 +38,7 @@ $('btnExtract').addEventListener('click', async () => {
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
 
-    fillField('share_code', data.share_code);
+    fillField('share_code', (data.share_code_display || data.share_code_raw9 || data.share_code || '').trim());
     fillField('dob_day', data.dob_day);
     fillField('dob_month', data.dob_month);
     fillField('dob_year', data.dob_year);

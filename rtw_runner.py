@@ -1,10 +1,9 @@
 import re
-
 import time
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError, Response
+from playwright.async_api import async_playwright, Response
 
 RTW_START_URL = "https://www.gov.uk/view-right-to-work"
 
@@ -17,18 +16,18 @@ def _s(x: Any) -> str:
     return ("" if x is None else str(x)).strip()
 
 
-def _goto_with_retry(page, url: str, tries: int = 3, timeout: int = 60000) -> Optional[Response]:
+async def _goto_with_retry(page, url: str, tries: int = 3, timeout: int = 60000) -> Optional[Response]:
     last_resp: Optional[Response] = None
     last_err: Optional[Exception] = None
     for i in range(tries):
         try:
-            resp = page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+            resp = await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
             last_resp = resp
             if resp is None or resp.status < 400:
                 return resp
         except Exception as e:
             last_err = e
-        page.wait_for_timeout(900 + i * 700)
+        await page.wait_for_timeout(900 + i * 700)
 
     if last_resp is not None:
         raise RuntimeError(f"Failed to load {url} (HTTP {last_resp.status})")
@@ -37,7 +36,7 @@ def _goto_with_retry(page, url: str, tries: int = 3, timeout: int = 60000) -> Op
     raise RuntimeError(f"Failed to load {url}")
 
 
-def _click_continue(page, timeout: int = 20000) -> None:
+async def _click_continue(page, timeout: int = 20000) -> None:
     for sel in [
         "button:has-text('Continue')",
         "input[type='submit'][value='Continue']",
@@ -45,16 +44,16 @@ def _click_continue(page, timeout: int = 20000) -> None:
     ]:
         loc = page.locator(sel).first
         try:
-            if loc.count():
-                loc.wait_for(state="visible", timeout=timeout)
-                loc.click()
+            if await loc.count():
+                await loc.wait_for(state="visible", timeout=timeout)
+                await loc.click()
                 return
         except Exception:
             continue
     raise RuntimeError("Continue button not found")
 
 
-def _click_start_now(page, timeout: int = 20000) -> None:
+async def _click_start_now(page, timeout: int = 20000) -> None:
     for sel in [
         "a.govuk-button:has-text('Start now')",
         "a:has-text('Start now')",
@@ -62,91 +61,108 @@ def _click_start_now(page, timeout: int = 20000) -> None:
     ]:
         loc = page.locator(sel).first
         try:
-            if loc.count():
-                loc.wait_for(state="visible", timeout=timeout)
-                loc.click()
+            if await loc.count():
+                await loc.wait_for(state="visible", timeout=timeout)
+                await loc.click()
                 return
         except Exception:
             continue
     raise RuntimeError("Start now button not found")
 
 
-def _fill_share_code(page, share_code: str) -> None:
-    # try common GOV.UK field ids/names
+async def _fill_share_code(page, share_code: str) -> None:
     candidates = [
         "input#shareCode",
         "input[name='shareCode']",
         "input[name='share_code']",
         "input#share-code",
         "input[name='share-code']",
-        "input[type='text']",
     ]
     for sel in candidates:
         loc = page.locator(sel).first
         try:
-            if loc.count():
-                loc.fill(share_code)
+            if await loc.count():
+                await loc.fill(share_code)
                 return
         except Exception:
             continue
+
+    # last resort: first visible text input
+    loc = page.locator("input[type='text']").first
+    if await loc.count():
+        await loc.fill(share_code)
+        return
+
     raise RuntimeError("Share code input not found")
 
 
-def _fill_dob(page, dd: str, mm: str, yyyy: str) -> None:
-    # Prefer labels (most reliable)
+async def _fill_dob(page, dd: str, mm: str, yyyy: str) -> None:
+    # best: GOV.UK labels
     try:
-        page.get_by_label("Day").fill(dd)
-        page.get_by_label("Month").fill(mm)
-        page.get_by_label("Year").fill(yyyy)
+        await page.get_by_label("Day").fill(dd)
+        await page.get_by_label("Month").fill(mm)
+        await page.get_by_label("Year").fill(yyyy)
         return
     except Exception:
         pass
 
-    # Common ids/names in GOV.UK date inputs
+    # common id/name triplets
     triplets = [
         ("#dateOfBirth-day", "#dateOfBirth-month", "#dateOfBirth-year"),
         ("input[name='dateOfBirth-day']", "input[name='dateOfBirth-month']", "input[name='dateOfBirth-year']"),
         ("#dob-day", "#dob-month", "#dob-year"),
+        ("input[name='dob_day']", "input[name='dob_month']", "input[name='dob_year']"),
     ]
     for a, b, c in triplets:
         try:
-            if page.locator(a).count() and page.locator(b).count() and page.locator(c).count():
-                page.fill(a, dd)
-                page.fill(b, mm)
-                page.fill(c, yyyy)
+            if (await page.locator(a).count()) and (await page.locator(b).count()) and (await page.locator(c).count()):
+                await page.fill(a, dd)
+                await page.fill(b, mm)
+                await page.fill(c, yyyy)
                 return
         except Exception:
             continue
 
-    # Last resort: first three text inputs
+    # fallback: first 3 visible text inputs
     inputs = page.locator("input[type='text']")
-    if inputs.count() >= 3:
-        inputs.nth(0).fill(dd)
-        inputs.nth(1).fill(mm)
-        inputs.nth(2).fill(yyyy)
-        return
+    if await inputs.count() >= 3:
+        try:
+            await inputs.nth(0).fill(dd)
+            await inputs.nth(1).fill(mm)
+            await inputs.nth(2).fill(yyyy)
+            return
+        except Exception:
+            pass
 
     raise RuntimeError("DOB inputs not found")
 
 
-def _fill_company(page, company_name: str) -> None:
+async def _fill_company(page, company_name: str) -> None:
     try:
-        page.get_by_label("Company name").fill(company_name)
+        await page.get_by_label("Company name").fill(company_name)
         return
     except Exception:
         pass
-    for sel in ["input#companyName", "input[name='companyName']", "input[name='company_name']", "input[type='text']"]:
+
+    for sel in ["input#companyName", "input[name='companyName']", "input[name='company_name']"]:
         loc = page.locator(sel).first
         try:
-            if loc.count():
-                loc.fill(company_name)
+            if await loc.count():
+                await loc.fill(company_name)
                 return
         except Exception:
             continue
+
+    # fallback: first visible text input
+    loc = page.locator("input[type='text']").first
+    if await loc.count():
+        await loc.fill(company_name)
+        return
+
     raise RuntimeError("Company name input not found")
 
 
-def run_rtw_check_and_download_pdf(
+async def run_rtw_check_and_download_pdf(
     *,
     share_code: str,
     dob_day: str,
@@ -155,6 +171,8 @@ def run_rtw_check_and_download_pdf(
     company_name: str,
     out_dir: Path,
 ) -> Dict[str, Any]:
+    """Async Playwright runner (FastAPI/Render-safe)."""
+
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -169,83 +187,72 @@ def run_rtw_check_and_download_pdf(
     yyyy = _s(dob_year)
     comp = _s(company_name)
 
-    if len(re.sub(r"[^A-Z0-9]", "", sc.upper())) != 9:
-        return {"ok": False, "error": "Invalid share code (must be 9 characters).", "trace_path": str(trace_path)}
-    if not (dd and mm and yyyy and comp):
-        return {"ok": False, "error": "Missing DOB or company name.", "trace_path": str(trace_path)}
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
             headless=True,
             args=[
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled",
+                "--disable-gpu",
+                "--no-zygote",
+                "--disable-setuid-sandbox",
             ],
         )
-        context = browser.new_context(
+        context = await browser.new_context(
             viewport={"width": 1280, "height": 800},
             locale="en-GB",
             timezone_id="Europe/London",
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/122.0.0.0 Safari/537.36"
-            ),
             extra_http_headers={"Accept-Language": "en-GB,en;q=0.9"},
+            accept_downloads=True,
         )
-        context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
-        context.tracing.start(screenshots=True, snapshots=True, sources=True)
-
-        page = context.new_page()
+        await context.tracing.start(screenshots=True, snapshots=True, sources=True)
+        page = await context.new_page()
 
         try:
-            _goto_with_retry(page, RTW_START_URL, tries=3, timeout=60000)
-            page.wait_for_timeout(600)
+            await _goto_with_retry(page, RTW_START_URL, tries=3, timeout=60000)
+            await page.wait_for_timeout(600)
 
-            _click_start_now(page)
-            page.wait_for_load_state("domcontentloaded", timeout=60000)
-            page.wait_for_timeout(600)
+            await _click_start_now(page)
+            await page.wait_for_load_state("domcontentloaded", timeout=60000)
+            await page.wait_for_timeout(600)
 
             # Share code page
-            _fill_share_code(page, sc)
-            _click_continue(page)
-            page.wait_for_load_state("domcontentloaded", timeout=60000)
-            page.wait_for_timeout(500)
+            await _fill_share_code(page, sc)
+            await _click_continue(page)
+            await page.wait_for_load_state("domcontentloaded", timeout=60000)
+            await page.wait_for_timeout(500)
 
             # DOB page
-            _fill_dob(page, dd, mm, yyyy)
-            _click_continue(page)
-            page.wait_for_load_state("domcontentloaded", timeout=60000)
-            page.wait_for_timeout(500)
+            await _fill_dob(page, dd, mm, yyyy)
+            await _click_continue(page)
+            await page.wait_for_load_state("domcontentloaded", timeout=60000)
+            await page.wait_for_timeout(500)
 
             # Company name page
-            _fill_company(page, comp)
-            _click_continue(page)
-            page.wait_for_load_state("domcontentloaded", timeout=60000)
-            page.wait_for_timeout(1200)
+            await _fill_company(page, comp)
+            await _click_continue(page)
+            await page.wait_for_load_state("domcontentloaded", timeout=60000)
+            await page.wait_for_timeout(1200)
 
             # Final page: download PDF
-            dl = None
+            download = None
             try:
-                with page.expect_download(timeout=60000) as dlinfo:
-                    # Link text is "Download PDF"
-                    page.locator("a:has-text('Download PDF'), a:has-text('Download PDF')").first.click()
-                dl = dlinfo.value
+                async with page.expect_download(timeout=60000) as dlinfo:
+                    await page.get_by_role("link", name="Download PDF").click()
+                download = await dlinfo.value
             except Exception:
-                # alternative: try clicking by role
-                with page.expect_download(timeout=60000) as dlinfo:
-                    page.get_by_role("link", name="Download PDF").click()
-                dl = dlinfo.value
+                async with page.expect_download(timeout=60000) as dlinfo:
+                    await page.locator("a:has-text('Download PDF')").first.click()
+                download = await dlinfo.value
 
-            if dl is None:
+            if download is None:
                 raise RuntimeError("Download did not start")
 
-            dl.save_as(str(pdf_path))
+            await download.save_as(str(pdf_path))
 
-            context.tracing.stop(path=str(trace_path))
-            context.close()
-            browser.close()
+            await context.tracing.stop(path=str(trace_path))
+            await context.close()
+            await browser.close()
 
             return {
                 "ok": True,
@@ -256,19 +263,19 @@ def run_rtw_check_and_download_pdf(
 
         except Exception as e:
             try:
-                page.screenshot(path=str(error_png), full_page=True)
+                await page.screenshot(path=str(error_png), full_page=True)
             except Exception:
                 pass
             try:
-                context.tracing.stop(path=str(trace_path))
+                await context.tracing.stop(path=str(trace_path))
             except Exception:
                 pass
             try:
-                context.close()
+                await context.close()
             except Exception:
                 pass
             try:
-                browser.close()
+                await browser.close()
             except Exception:
                 pass
 

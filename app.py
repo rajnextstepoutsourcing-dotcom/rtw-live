@@ -172,7 +172,7 @@ async def rtw_run(request: Request):
     job_dir = new_job_dir("rtw")
 
     try:
-        result = run_rtw_check(
+        result = await run_rtw_check(
             share_code=sc,
             dob_day=str(d),
             dob_month=str(m),

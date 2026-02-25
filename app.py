@@ -184,6 +184,22 @@ async def rtw_run(request: Request):
         raise HTTPException(status_code=500, detail=f"RTW automation failed: {e}")
 
     if not isinstance(result, dict) or not result.get("ok"):
+        # If GOV.UK shows an error (expired share code / details don't match),
+        # the runner can return a printable error PDF. If present, return it as a download
+        # (status 200 so the browser can download), and include a header to let the UI show a message.
+        if isinstance(result, dict):
+            err = (result.get("error") or "Unknown error").strip()
+            error_pdf = (result.get("error_pdf") or "").strip()
+            if error_pdf and Path(error_pdf).exists():
+                return FileResponse(
+                    path=error_pdf,
+                    media_type="application/pdf",
+                    filename=result.get("filename") or "RTW_Error.pdf",
+                    headers={
+                        "X-RTW-Status": "error",
+                        "X-RTW-Message": err[:200],
+                    },
+                )
         err = (result or {}).get("error") if isinstance(result, dict) else None
         raise HTTPException(status_code=500, detail=f"RTW automation failed: {err or 'Unknown error'}")
 

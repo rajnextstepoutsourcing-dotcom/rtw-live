@@ -170,25 +170,29 @@ async def rtw_run(request: Request):
         raise HTTPException(status_code=500, detail=f"rtw_runner missing or import failed: {e}")
 
     job_dir = new_job_dir("rtw")
-    out_pdf = job_dir / "rtw_result.pdf"
 
     try:
-        run_rtw_check(
+        result = run_rtw_check(
             share_code=sc,
-            dob_day=d,
-            dob_month=m,
-            dob_year=y,
+            dob_day=str(d),
+            dob_month=str(m),
+            dob_year=str(y),
             company_name=company_name,
-            output_pdf_path=str(out_pdf),
+            out_dir=job_dir,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"RTW automation failed: {e}")
 
-    if not out_pdf.exists():
+    if not isinstance(result, dict) or not result.get("ok"):
+        err = (result or {}).get("error") if isinstance(result, dict) else None
+        raise HTTPException(status_code=500, detail=f"RTW automation failed: {err or 'Unknown error'}")
+
+    pdf_path = (result.get("pdf_path") or "").strip()
+    if not pdf_path or not Path(pdf_path).exists():
         raise HTTPException(status_code=500, detail="RTW automation finished but PDF not found")
 
     return FileResponse(
-        path=str(out_pdf),
+        path=pdf_path,
         media_type="application/pdf",
-        filename="RTW_Result.pdf",
+        filename=result.get("filename") or "RTW_Result.pdf",
     )

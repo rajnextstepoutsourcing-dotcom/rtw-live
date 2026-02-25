@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RTW Check</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>RTW Check</h1>
+    <p class="muted">Upload Share Code document + DOB document → Extract → (edit if needed) → Run RTW Check → Official PDF downloads.</p>
+
+    <section class="card">
+      <h2>Step 1 — Enter company name</h2>
+      <div class="grid">
+        <label>
+          Company name
+          <input id="company_name" type="text" placeholder="e.g., Omni" />
+        </label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Step 2 — Upload documents</h2>
+
+      <div class="grid">
+        <label>
+          Upload Share Code document (PDF/Image)
+          <input id="share_file" type="file" accept="application/pdf,image/*" />
+        </label>
+        <label>
+          Upload DOB document (Passport/DBS PDF/Image)
+          <input id="dob_file" type="file" accept="application/pdf,image/*" />
+        </label>
+      </div>
+
+      <div class="row">
+        <button id="btnExtract">Extract</button>
+        <span id="extractStatus" class="muted"></span>
+      </div>
+
+      <div class="divider"></div>
+
+      <h3>Extracted (editable)</h3>
+      <div class="grid">
+        <label>
+          Share code
+          <input id="share_code" type="text" placeholder="e.g., WNX J39 5WN" />
+          <small id="conf_share" class="muted"></small>
+        </label>
+
+        <label>
+          Date of birth (DD / MM / YYYY)
+          <div class="grid3">
+            <input id="dob_day" type="text" placeholder="DD" />
+            <input id="dob_month" type="text" placeholder="MM" />
+            <input id="dob_year" type="text" placeholder="YYYY" />
+          </div>
+          <small id="conf_dob" class="muted"></small>
+        </label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Step 3 — Run RTW check</h2>
+      <div class="row">
+        <button id="btnRun">Run & Download PDF</button>
+        <span id="runStatus" class="muted"></span>
+      </div>
+      <p class="muted">Tip: If any field is wrong, edit it above and run again.</p>
+    </section>
+
+    <footer class="muted">
+      <p>If extraction fails for scanned images/PDFs, set <code>GEMINI_API_KEY</code> in Render environment variables.</p>
+    </footer>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

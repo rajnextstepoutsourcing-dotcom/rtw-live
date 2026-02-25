@@ -16,6 +16,63 @@ def _s(x: Any) -> str:
     return ("" if x is None else str(x)).strip()
 
 
+async def _page_text(page) -> str:
+    try:
+        return (await page.inner_text("body")).strip()
+    except Exception:
+        try:
+            return (await page.content())[:5000]
+        except Exception:
+            return ""
+
+
+async def _detect_rtw_error_message(page) -> Optional[str]:
+    """
+    Detect common GOV.UK RTW validation failures like expired share code / details mismatch.
+    Returns a short error message if found.
+    """
+    txt = (await _page_text(page)).lower()
+
+    needles = [
+        ("expired", "Share code appears to be expired."),
+        ("has expired", "Share code appears to be expired."),
+        ("does not match", "Details do not match the share code."),
+        ("do not match", "Details do not match the share code."),
+        ("could not find", "Could not find right to work details for these details."),
+        ("cannot view", "Cannot view right to work details for these details."),
+        ("there is a problem", "There is a problem with the details provided."),
+        ("error summary", "There is a problem with the details provided."),
+    ]
+    for n, msg in needles:
+        if n in txt:
+            # ensure it's actually an error page by checking error summary component or heading
+            try:
+                if await page.locator(".govuk-error-summary").count():
+                    return msg
+            except Exception:
+                pass
+            # fallback: if the page contains strong error signals
+            if "govuk-error-summary" in txt or "there is a problem" in txt:
+                return msg
+
+    return None
+
+
+async def _try_save_error_pdf(page, path: Path) -> bool:
+    """
+    Try to save the current page as a PDF (works in Chromium).
+    """
+    try:
+        await page.emulate_media(media="screen")
+    except Exception:
+        pass
+    try:
+        await page.pdf(path=str(path), format="A4", print_background=True)
+        return True
+    except Exception:
+        return False
+
+
 async def _goto_with_retry(page, url: str, tries: int = 3, timeout: int = 60000) -> Optional[Response]:
     last_resp: Optional[Response] = None
     last_err: Optional[Exception] = None
@@ -179,6 +236,7 @@ async def run_rtw_check_and_download_pdf(
     tag = _tag()
     trace_path = out_dir / f"rtw-{tag}.trace.zip"
     error_png = out_dir / f"rtw-{tag}.error.png"
+    error_pdf = out_dir / f"RTW-Error-{tag}.pdf"
     pdf_path = out_dir / f"RTW-Check-{tag}.pdf"
 
     sc = _s(share_code)
@@ -222,17 +280,62 @@ async def run_rtw_check_and_download_pdf(
             await page.wait_for_load_state("domcontentloaded", timeout=60000)
             await page.wait_for_timeout(500)
 
+            err = await _detect_rtw_error_message(page)
+            if err:
+                await _try_save_error_pdf(page, error_pdf)
+                await context.tracing.stop(path=str(trace_path))
+                await context.close()
+                await browser.close()
+                return {
+                    "ok": False,
+                    "error": err,
+                    "error_pdf": str(error_pdf),
+                    "error_png": str(error_png),
+                    "trace_path": str(trace_path),
+                }
+
+
             # DOB page
             await _fill_dob(page, dd, mm, yyyy)
             await _click_continue(page)
             await page.wait_for_load_state("domcontentloaded", timeout=60000)
             await page.wait_for_timeout(500)
 
+            err = await _detect_rtw_error_message(page)
+            if err:
+                await _try_save_error_pdf(page, error_pdf)
+                await context.tracing.stop(path=str(trace_path))
+                await context.close()
+                await browser.close()
+                return {
+                    "ok": False,
+                    "error": err,
+                    "error_pdf": str(error_pdf),
+                    "error_png": str(error_png),
+                    "trace_path": str(trace_path),
+                }
+
+
             # Company name page
             await _fill_company(page, comp)
             await _click_continue(page)
             await page.wait_for_load_state("domcontentloaded", timeout=60000)
-            await page.wait_for_timeout(1200)            # Final page: download PDF
+            await page.wait_for_timeout(1200)
+
+            err = await _detect_rtw_error_message(page)
+            if err:
+                await _try_save_error_pdf(page, error_pdf)
+                await context.tracing.stop(path=str(trace_path))
+                await context.close()
+                await browser.close()
+                return {
+                    "ok": False,
+                    "error": err,
+                    "error_pdf": str(error_pdf),
+                    "error_png": str(error_png),
+                    "trace_path": str(trace_path),
+                }
+            # Final page: download PDF
             await page.wait_for_load_state("domcontentloaded", timeout=90000)
             try:
                 await page.wait_for_load_state("networkidle", timeout=90000)
@@ -303,12 +406,17 @@ async def run_rtw_check_and_download_pdf(
                 "ok": True,
                 "pdf_path": str(pdf_path),
                 "filename": pdf_path.name,
+                "error_pdf": str(error_pdf) if error_pdf.exists() else None,
                 "trace_path": str(trace_path),
             }
 
         except Exception as e:
             try:
                 await page.screenshot(path=str(error_png), full_page=True)
+            except Exception:
+                pass
+            try:
+                await _try_save_error_pdf(page, error_pdf)
             except Exception:
                 pass
             try:
@@ -328,5 +436,6 @@ async def run_rtw_check_and_download_pdf(
                 "ok": False,
                 "error": str(e),
                 "error_png": str(error_png),
+                "error_pdf": str(error_pdf) if error_pdf.exists() else None,
                 "trace_path": str(trace_path),
             }

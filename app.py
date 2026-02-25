@@ -3,8 +3,8 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from fastapi import FastAPI, File, UploadFile, Request, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -31,8 +31,11 @@ def new_job_dir(prefix: str = "rtw") -> Path:
     return job_dir
 
 
-def save_upload_to_temp(upload: UploadFile) -> Path:
-    suffix = Path(upload.filename or "").suffix.lower()
+def save_upload_to_temp(upload) -> Path:
+    """
+    Save an UploadFile-like object (Starlette/FastAPI UploadFile) to a temp path.
+    """
+    suffix = Path(getattr(upload, "filename", "") or "").suffix.lower()
     tmp = Path(tempfile.mkstemp(suffix=suffix)[1])
     with tmp.open("wb") as f:
         shutil.copyfileobj(upload.file, f)
@@ -60,36 +63,59 @@ def health():
 
 
 # ----------------------------
-# RTW: Extract (DBS-style: PDF text -> Gemini Vision fallback)
+# RTW: Extract (Flexible form field names)
 # ----------------------------
 @app.post("/rtw/extract")
-async def rtw_extract(
-    sharecode_file: UploadFile = File(...),
-    dob_file: UploadFile = File(...),
-):
-    tmp_share = save_upload_to_temp(sharecode_file)
-    tmp_dob = save_upload_to_temp(dob_file)
+async def rtw_extract(request: Request):
+    """
+    Accepts multipart/form-data with two files.
+    Frontend field names have varied historically, so we accept multiple aliases
+    to avoid 422 errors:
 
-    try:
-        share_bytes = read_file_bytes(tmp_share)
-        dob_bytes = read_file_bytes(tmp_dob)
+    Share doc: sharecode_file / sharecode_file1 / share_file / share_file1
+    DOB doc:   dob_file / dob_file1 / dobfile / dobfile1
+    """
+    form = await request.form()
 
-        result = extract_rtw_fields(
-            share_file_bytes=share_bytes,
-            dob_file_bytes=dob_bytes,
-            share_filename=sharecode_file.filename or "share",
-            dob_filename=dob_file.filename or "dob",
+    share_up = (
+        form.get("sharecode_file")
+        or form.get("sharecode_file1")
+        or form.get("share_file")
+        or form.get("share_file1")
+    )
+    dob_up = (
+        form.get("dob_file")
+        or form.get("dob_file1")
+        or form.get("dobfile")
+        or form.get("dobfile1")
+    )
+
+    if not share_up or not dob_up:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "Missing files",
+                "expected_any_of": {
+                    "share": ["sharecode_file", "sharecode_file1", "share_file", "share_file1"],
+                    "dob": ["dob_file", "dob_file1", "dobfile", "dobfile1"],
+                },
+            },
         )
-        return result
-    finally:
-        try:
-            tmp_share.unlink(missing_ok=True)
-        except Exception:
-            pass
-        try:
-            tmp_dob.unlink(missing_ok=True)
-        except Exception:
-            pass
+
+    # Read bytes directly from uploaded files (no OCR/system deps)
+    try:
+        share_bytes = await share_up.read()
+        dob_bytes = await dob_up.read()
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": f"Failed to read uploaded files: {e}"})
+
+    result = extract_rtw_fields(
+        share_file_bytes=share_bytes,
+        dob_file_bytes=dob_bytes,
+        share_filename=getattr(share_up, "filename", "share"),
+        dob_filename=getattr(dob_up, "filename", "dob"),
+    )
+    return result
 
 
 # ----------------------------

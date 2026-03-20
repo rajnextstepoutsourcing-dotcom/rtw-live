@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>RTW Check — NextStep</title>
+  <link rel="stylesheet" href="/static/styles.css"/>
+</head>
+<body>
+  <div class="container">
+
+    <div class="topBar">
+      <div class="topBar-brand">
+        <span class="brand-icon">⚡</span>
+        <span class="brand-name">Next<span>Step</span></span>
+        <span class="brand-sep">|</span>
+        <span class="brand-tool">Right to Work Check</span>
+      </div>
+      <a href="https://nextstep.co.uk/dashboard" class="btn-back">← Dashboard</a>
+    </div>
+
+    <div id="authWarning" class="auth-warning hidden">
+      <span>⚠</span>
+      <span>You must be logged in. <a href="https://nextstep.co.uk/login">Log in here</a></span>
+    </div>
+
+    <div id="tokenBar" class="token-bar hidden">
+      <span class="token-label">🪙 Tokens remaining:</span>
+      <span id="tokenCount" class="token-count">—</span>
+    </div>
+
+    <p class="muted">Upload Share Code document + DOB document → Extract → (edit if needed) → Run RTW Check → Official PDF downloads.</p>
+
+    <section class="card">
+      <h2>Step 1 — Enter company name</h2>
+      <div class="grid">
+        <label>Company name
+          <input id="company_name" type="text" placeholder="e.g., Omni Healthcare"/>
+        </label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Step 2 — Upload documents</h2>
+      <div class="grid">
+        <label>Share Code document (PDF/Image)
+          <input id="share_file" type="file" accept="application/pdf,image/*"/>
+        </label>
+        <label>DOB document — Passport/DBS (PDF/Image)
+          <input id="dob_file" type="file" accept="application/pdf,image/*"/>
+        </label>
+      </div>
+      <div class="row">
+        <button id="btnExtract">Extract</button>
+        <span id="extractStatus" class="muted"></span>
+      </div>
+      <div class="divider"></div>
+      <h3>Extracted (editable)</h3>
+      <div class="grid">
+        <label>Share code
+          <input id="share_code" type="text" placeholder="e.g., WNX J39 5WN"/>
+          <small id="conf_share" class="muted"></small>
+        </label>
+        <label>Date of birth (DD / MM / YYYY)
+          <div class="grid3">
+            <input id="dob_day"   type="text" placeholder="DD"/>
+            <input id="dob_month" type="text" placeholder="MM"/>
+            <input id="dob_year"  type="text" placeholder="YYYY"/>
+          </div>
+          <small id="conf_dob" class="muted"></small>
+        </label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Step 3 — Run RTW check</h2>
+
+      <!-- Progress -->
+      <div id="progressWrap" class="progress-wrap hidden">
+        <div class="progress-header">
+          <span id="progressBadge" class="badge running">⚙️ Processing</span>
+          <span id="progressMsg" class="progress-msg muted"></span>
+        </div>
+        <div class="progress-bar-outer">
+          <div id="progressBar" class="progress-bar-inner" style="width:0%"></div>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:14px;">
+        <button id="btnRun" class="primary">Run &amp; Download PDF</button>
+        <span id="runStatus" class="muted"></span>
+      </div>
+      <p class="muted small" style="margin-top:10px;">Tip: If any field is wrong, edit it above and run again. Each run uses 1 token.</p>
+    </section>
+
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

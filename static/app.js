@@ -79,7 +79,8 @@ function _pollStatus(jobId) {
       if (state === "failed") {
         _stopPoll();
         const hasErrorPdf = !!data.pdf_url;
-        const msg = hasErrorPdf ? "" : (data.error || data.message || "RTW check failed.");
+        if (hasErrorPdf) { __lastCompletedJobId = jobId; __editedAfterRun = false; }
+        const msg = hasErrorPdf ? "" : "";
         setText("runStatus", msg);
         // If error PDF available, offer download
         if (data.pdf_url) {

@@ -328,17 +328,38 @@ def _run_job_sync(job_id: str):
     if not isinstance(result, dict) or not result.get("ok"):
         err = (result.get("error") or "RTW automation failed") if isinstance(result, dict) else "RTW automation failed"
         error_pdf = (result.get("error_pdf") or "") if isinstance(result, dict) else ""
-        state = {"state": "failed", "message": err, "pdf_url": "", "filename": "", "error": err, "billable": False}
-        if error_pdf and Path(error_pdf).exists():
+        has_error_pdf = bool(error_pdf and Path(error_pdf).exists())
+        state = {
+            "state": "failed",
+            "message": "",
+            "pdf_url": "",
+            "filename": "",
+            "error": "",
+            "billable": has_error_pdf,
+            "billing_waived": False,
+        }
+        if has_error_pdf:
             err_name = Path(error_pdf).name
             state.update({"pdf_url": f"/rtw/download/{job_id}/{err_name}", "filename": err_name})
         _jset(job_id, state)
         try:
             import db
+            if prev_job_id and edited_after_run:
+                prev_payload = _load_payload(prev_job_id) or {}
+                prev_db_job_id = prev_payload.get("db_job_id")
+                prev_state = _jget(prev_job_id) or {}
+                if prev_db_job_id and prev_state.get("billable") and not bool(prev_state.get("billing_waived")):
+                    db.reverse_usage(tenant_id=tenant_id, user_id=user_id, db_job_id=prev_db_job_id, reversed_outputs=1)
+                    prev_state["billing_waived"] = True
+                    prev_state["billable"] = False
+                    prev_state["message"] = ""
+                    _jset(prev_job_id, prev_state)
             if db_job_id:
                 db.update_job_status(db_job_id=db_job_id, status="failed", successful_items=0, failed_items=1)
-        except Exception:
-            pass
+                if has_error_pdf:
+                    db.record_usage(tenant_id=tenant_id, user_id=user_id, db_job_id=db_job_id, successful_outputs=1)
+        except Exception as e:
+            log.warning("[RTW] DB update/usage failed: %s", e)
         return
 
     pdf_path = str(result.get("pdf_path") or "").strip()
@@ -354,7 +375,7 @@ def _run_job_sync(job_id: str):
 
     filename = Path(pdf_path).name
     pdf_url = f"/rtw/download/{job_id}/{filename}"
-    state = {"state": "done", "message": "Complete — your RTW PDF is ready.", "pdf_url": pdf_url, "filename": filename, "error": "", "billable": True}
+    state = {"state": "done", "message": "Complete — your RTW PDF is ready.", "pdf_url": pdf_url, "filename": filename, "error": "", "billable": True, "billing_waived": False}
     _jset(job_id, state)
     try:
         import db

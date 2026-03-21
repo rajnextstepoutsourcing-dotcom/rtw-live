@@ -16,12 +16,12 @@
         <span class="brand-sep">|</span>
         <span class="brand-tool">Right to Work Check</span>
       </div>
-      <a href="https://nextstep.co.uk/dashboard" class="btn-back">← Dashboard</a>
+      <a href="{{ dashboard_url }}" class="btn-back">← Dashboard</a>
     </div>
 
     <div id="authWarning" class="auth-warning hidden">
       <span>⚠</span>
-      <span>You must be logged in. <a href="https://nextstep.co.uk/login">Log in here</a></span>
+      <span>You must be logged in. <a href="{{ login_url }}">Log in here</a></span>
     </div>
 
     <div id="tokenBar" class="token-bar hidden">
@@ -90,7 +90,7 @@
         <button id="btnRun" class="primary">Run &amp; Download PDF</button>
         <span id="runStatus" class="muted"></span>
       </div>
-      <p class="muted small" style="margin-top:10px;">Tip: If any field is wrong, edit it above and run again. Each run uses 1 token.</p>
+      <p class="muted small" style="margin-top:10px;">Tip: If any field is wrong due to extraction, edit it above and rerun. In that special case, only the rerun should be billed.</p>
     </section>
 
   </div>

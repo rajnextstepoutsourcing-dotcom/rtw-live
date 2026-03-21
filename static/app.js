@@ -16,6 +16,15 @@ function setConf(id, value) {
 // ── Progress ──────────────────────────────────────────────────────────────────
 let _pollTimer = null;
 
+let _lastSuccessfulJobId = "";
+let _editedSinceSuccess = false;
+
+["company_name","share_code","dob_day","dob_month","dob_year"].forEach(id => {
+  const el = $(id);
+  if (!el) return;
+  el.addEventListener("input", () => { if (_lastSuccessfulJobId) _editedSinceSuccess = true; });
+});
+
 function _showProgress(state, msg) {
   const wrap = $("progressWrap"); if (!wrap) return;
   wrap.classList.remove("hidden");
@@ -70,6 +79,8 @@ function _pollStatus(jobId) {
           a.click();
           a.remove();
         }
+        _lastSuccessfulJobId = jobId;
+        _editedSinceSuccess = false;
         setText("runStatus", "Downloaded. Run again to check another candidate.");
         const btn = $("btnRun");
         if (btn) { btn.disabled = false; btn.textContent = "Run & Download PDF"; }
@@ -158,6 +169,8 @@ $("btnRun")?.addEventListener("click", async () => {
     dob_day:      $("dob_day")?.value.trim()      || "",
     dob_month:    $("dob_month")?.value.trim()    || "",
     dob_year:     $("dob_year")?.value.trim()     || "",
+    previous_job_id: _editedSinceSuccess ? _lastSuccessfulJobId : "",
+    edited_after_previous: _editedSinceSuccess,
   };
 
   if (!payload.company_name) { alert("Please enter Company name."); return; }

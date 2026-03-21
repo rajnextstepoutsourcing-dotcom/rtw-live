@@ -16,8 +16,6 @@ services:
         sync: false
       - key: REDIS_URL
         sync: false
-      - key: NEXTSTEP_INTERNAL_TOKEN
-        sync: false
       - key: BACKEND_VALIDATE_URL
         value: https://nextstep-backend-e75l.onrender.com/api/validate-session
       - key: APP_DASHBOARD_URL
@@ -25,12 +23,8 @@ services:
       - key: APP_LOGIN_URL
         value: https://nextstep-backend-e75l.onrender.com/login
       - key: MAX_CONCURRENT_TASKS
-        value: "1"
+        value: 1
       - key: WORKER_POLL_INTERVAL
-        value: "2"
+        value: 2
       - key: TASK_TIMEOUT_SECONDS
-        value: "600"
-      - key: MAX_TASK_RETRIES
-        value: "1"
-      - key: ZIP_ON_COMPLETE
-        value: "true"
+        value: 600

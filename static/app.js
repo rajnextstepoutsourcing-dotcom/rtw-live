@@ -16,15 +16,6 @@ function setConf(id, value) {
 // ── Progress ──────────────────────────────────────────────────────────────────
 let _pollTimer = null;
 
-let _lastSuccessfulJobId = "";
-let _editedSinceSuccess = false;
-
-["company_name","share_code","dob_day","dob_month","dob_year"].forEach(id => {
-  const el = $(id);
-  if (!el) return;
-  el.addEventListener("input", () => { if (_lastSuccessfulJobId) _editedSinceSuccess = true; });
-});
-
 function _showProgress(state, msg) {
   const wrap = $("progressWrap"); if (!wrap) return;
   wrap.classList.remove("hidden");
@@ -42,7 +33,7 @@ function _showProgress(state, msg) {
         if (pct >= 85) clearInterval(anim);
       }, 800);
     }
-  } else if (state === "done") {
+  } else if (state === "done") { __lastCompletedJobId = jobId; __editedAfterRun = false;
     if (badge) { badge.className = "badge clear"; badge.textContent = "✓ Complete"; }
     if (bar) bar.style.width = "100%";
   } else if (state === "failed") {
@@ -68,7 +59,7 @@ function _pollStatus(jobId) {
       const state = data.state || "running";
       _showProgress(state, data.message || "");
 
-      if (state === "done") {
+      if (state === "done") { __lastCompletedJobId = jobId; __editedAfterRun = false;
         _stopPoll();
         // Auto-trigger download
         if (data.pdf_url) {
@@ -79,8 +70,6 @@ function _pollStatus(jobId) {
           a.click();
           a.remove();
         }
-        _lastSuccessfulJobId = jobId;
-        _editedSinceSuccess = false;
         setText("runStatus", "Downloaded. Run again to check another candidate.");
         const btn = $("btnRun");
         if (btn) { btn.disabled = false; btn.textContent = "Run & Download PDF"; }
@@ -89,7 +78,8 @@ function _pollStatus(jobId) {
 
       if (state === "failed") {
         _stopPoll();
-        const msg = data.error || data.message || "RTW check failed.";
+        const hasErrorPdf = !!data.pdf_url;
+        const msg = hasErrorPdf ? "" : (data.error || data.message || "RTW check failed.");
         setText("runStatus", msg);
         // If error PDF available, offer download
         if (data.pdf_url) {
@@ -164,18 +154,22 @@ $("btnRun")?.addEventListener("click", async () => {
   _hideProgress();
 
   const payload = {
+    previous_job_id: __lastCompletedJobId || "",
+    edited_after_run: __editedAfterRun,
     company_name: $("company_name")?.value.trim() || "",
     share_code:   $("share_code")?.value.trim()   || "",
     dob_day:      $("dob_day")?.value.trim()      || "",
     dob_month:    $("dob_month")?.value.trim()    || "",
     dob_year:     $("dob_year")?.value.trim()     || "",
-    previous_job_id: _editedSinceSuccess ? _lastSuccessfulJobId : "",
-    edited_after_previous: _editedSinceSuccess,
   };
 
-  if (!payload.company_name) { alert("Please enter Company name."); return; }
+  if (!payload.company_name) {
+    setText("runStatus", "Company name missing");
+    return;
+  }
   if (!payload.share_code || !payload.dob_day || !payload.dob_month || !payload.dob_year) {
-    alert("Please fill Share code and full Date of Birth."); return;
+    setText("runStatus", "Please fill Share code and full Date of Birth.");
+    return;
   }
 
   // Remove any previous error download links
@@ -196,8 +190,8 @@ $("btnRun")?.addEventListener("click", async () => {
 
     if (!res.ok) {
       const msg = data?.detail || "Run failed.";
-      _showProgress("failed", msg);
-      setText("runStatus", msg);
+      _showProgress("failed", msg === "Company name is required." ? "Company name missing" : "");
+      setText("runStatus", msg === "Company name is required." ? "Company name missing" : "");
       if (btn) { btn.disabled = false; btn.textContent = "Run & Download PDF"; }
       return;
     }
@@ -210,8 +204,17 @@ $("btnRun")?.addEventListener("click", async () => {
   } catch(e) {
     console.error(e);
     const msg = e?.message || "Run failed.";
-    _showProgress("failed", msg);
-    setText("runStatus", msg);
+    _showProgress("failed", "");
+    setText("runStatus", msg === "Company name is required." ? "Company name missing" : "");
     if (btn) { btn.disabled = false; btn.textContent = "Run & Download PDF"; }
   }
+});
+
+
+// Rerun-aware billing helpers
+let __lastCompletedJobId = "";
+let __editedAfterRun = false;
+["share_code","dob_day","dob_month","dob_year","company_name"].forEach(id=>{
+  const el = document.getElementById(id);
+  if(el){ el.addEventListener("input", ()=>{ if(__lastCompletedJobId) __editedAfterRun = true; }); }
 });

@@ -1,9 +1,5 @@
-"""
-db.py — Shared database connection for RTW tool
-Connects to the same PostgreSQL as the main NextStep backend.
-Records jobs and usage to the central database.
-"""
 
+"""db.py — Shared database connection for RTW tool."""
 import os
 import logging
 from datetime import datetime
@@ -12,11 +8,9 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 
 log = logging.getLogger(__name__)
-
 _DATABASE_URL = os.environ.get("DATABASE_URL", "")
 if _DATABASE_URL.startswith("postgres://"):
     _DATABASE_URL = _DATABASE_URL.replace("postgres://", "postgresql://", 1)
-
 _engine = None
 _SessionLocal = None
 _TOOL_ID: Optional[int] = None
@@ -78,25 +72,17 @@ def get_tenant_tokens_remaining(tenant_id: int) -> int:
         session.close()
 
 
-def create_job_record(*, tenant_id: int, user_id: int, total_items: int = 1) -> Optional[int]:
+def create_job_record(*, tenant_id: int, user_id: int, total_items: int) -> Optional[int]:
     session = get_session()
     if not session:
         return None
     try:
         tool_id = get_rtw_tool_id()
-        result = session.execute(text("""
-            INSERT INTO jobs (tenant_id, user_id, tool_id, status, total_items,
-                              successful_items, failed_items, created_at)
+        row = session.execute(text("""
+            INSERT INTO jobs (tenant_id, user_id, tool_id, status, total_items, successful_items, failed_items, created_at)
             VALUES (:tenant_id, :user_id, :tool_id, 'queued', :total_items, 0, 0, :now)
             RETURNING id
-        """), {
-            "tenant_id": tenant_id,
-            "user_id": user_id,
-            "tool_id": tool_id,
-            "total_items": total_items,
-            "now": datetime.utcnow(),
-        })
-        row = result.fetchone()
+        """), {"tenant_id": tenant_id, "user_id": user_id, "tool_id": tool_id, "total_items": total_items, "now": datetime.utcnow()}).fetchone()
         session.commit()
         return row[0] if row else None
     except Exception as e:
@@ -109,7 +95,7 @@ def create_job_record(*, tenant_id: int, user_id: int, total_items: int = 1) -> 
 
 def update_job_status(*, db_job_id: int, status: str, successful_items: int, failed_items: int) -> None:
     session = get_session()
-    if not session or not db_job_id:
+    if not session:
         return
     try:
         session.execute(text("""
@@ -119,13 +105,7 @@ def update_job_status(*, db_job_id: int, status: str, successful_items: int, fai
                 failed_items = :failed,
                 completed_at = :completed_at
             WHERE id = :job_id
-        """), {
-            "status": status,
-            "successful": successful_items,
-            "failed": failed_items,
-            "completed_at": datetime.utcnow() if status in ("completed", "failed") else None,
-            "job_id": db_job_id,
-        })
+        """), {"status": status, "successful": successful_items, "failed": failed_items, "completed_at": datetime.utcnow() if status in ('completed','failed') else None, "job_id": db_job_id})
         session.commit()
     except Exception as e:
         log.error("[DB] update_job_status error: %s", e)
@@ -134,8 +114,8 @@ def update_job_status(*, db_job_id: int, status: str, successful_items: int, fai
         session.close()
 
 
-def adjust_usage(*, tenant_id: int, user_id: int, db_job_id: Optional[int], delta_outputs: int) -> None:
-    if delta_outputs == 0:
+def record_usage(*, tenant_id: int, user_id: int, db_job_id: Optional[int], successful_outputs: int) -> None:
+    if successful_outputs <= 0:
         return
     session = get_session()
     if not session:
@@ -145,33 +125,35 @@ def adjust_usage(*, tenant_id: int, user_id: int, db_job_id: Optional[int], delt
         session.execute(text("""
             INSERT INTO usage_records (tenant_id, user_id, tool_id, job_id, billable_output_count, created_at)
             VALUES (:tenant_id, :user_id, :tool_id, :job_id, :count, :now)
-        """), {
-            "tenant_id": tenant_id,
-            "user_id": user_id,
-            "tool_id": tool_id,
-            "job_id": db_job_id,
-            "count": delta_outputs,
-            "now": datetime.utcnow(),
-        })
-        session.execute(text("""
-            UPDATE tenants
-            SET tokens_used = GREATEST(tokens_used + :count, 0)
-            WHERE id = :tenant_id
-        """), {"count": delta_outputs, "tenant_id": tenant_id})
+        """), {"tenant_id": tenant_id, "user_id": user_id, "tool_id": tool_id, "job_id": db_job_id, "count": successful_outputs, "now": datetime.utcnow()})
+        session.execute(text("UPDATE tenants SET tokens_used = tokens_used + :count WHERE id = :tenant_id"), {"count": successful_outputs, "tenant_id": tenant_id})
         session.commit()
     except Exception as e:
-        log.error("[DB] adjust_usage error: %s", e)
+        log.error("[DB] record_usage error: %s", e)
         session.rollback()
     finally:
         session.close()
 
 
-def record_usage(*, tenant_id: int, user_id: int, db_job_id: Optional[int], successful_outputs: int) -> None:
-    adjust_usage(tenant_id=tenant_id, user_id=user_id, db_job_id=db_job_id, delta_outputs=successful_outputs)
-
-
 def reverse_usage(*, tenant_id: int, user_id: int, db_job_id: Optional[int], reversed_outputs: int) -> None:
-    adjust_usage(tenant_id=tenant_id, user_id=user_id, db_job_id=db_job_id, delta_outputs=-abs(reversed_outputs))
+    if reversed_outputs <= 0:
+        return
+    session = get_session()
+    if not session:
+        return
+    try:
+        tool_id = get_rtw_tool_id()
+        session.execute(text("""
+            INSERT INTO usage_records (tenant_id, user_id, tool_id, job_id, billable_output_count, created_at)
+            VALUES (:tenant_id, :user_id, :tool_id, :job_id, :count, :now)
+        """), {"tenant_id": tenant_id, "user_id": user_id, "tool_id": tool_id, "job_id": db_job_id, "count": -abs(reversed_outputs), "now": datetime.utcnow()})
+        session.execute(text("UPDATE tenants SET tokens_used = GREATEST(tokens_used - :count, 0) WHERE id = :tenant_id"), {"count": reversed_outputs, "tenant_id": tenant_id})
+        session.commit()
+    except Exception as e:
+        log.error("[DB] reverse_usage error: %s", e)
+        session.rollback()
+    finally:
+        session.close()
 
 
 def validate_user_token(token: str) -> Optional[dict]:
@@ -193,7 +175,7 @@ def validate_user_token(token: str) -> Optional[dict]:
         if not result:
             return None
         user_id, tenant_id, role, active, tenant_status = result
-        if not active or tenant_status != "active":
+        if not active or tenant_status != 'active':
             return None
         return {"user_id": user_id, "tenant_id": tenant_id, "role": role}
     except Exception as e:
